@@ -1,45 +1,69 @@
-import streamlit as st, fitz, io
+import streamlit as st
+import fitz
+import io
 from PIL import Image
 from docx import Document
 from pdf2docx import Converter
-import requests
 
-st.set_page_config(page_title="PDF Tools + IA", layout="wide")
+st.set_page_config(page_title="PDF Tools + IA", layout="wide", page_icon="❤️")
 st.title("❤️ PDF Tools + IA - Simple")
 
 # --- IA ARRIBA ---
 st.header("🤖 IA - Chatea y Genera Imágenes")
+
 api_key = st.secrets.get("GROQ_API_KEY", "")
 
-prompt = st.chat_input("Pregunta a la IA o pide una imagen: 'genera un gato astronauta'")
+if 'chat' not in st.session_state:
+    st.session_state.chat = []
+
+for m in st.session_state.chat:
+    st.chat_message(m["role"]).write(m["content"])
+
+prompt = st.chat_input("Pregunta a la IA o pide una imagen: 'crea una oveja'")
+
 if prompt:
+    st.session_state.chat.append({"role": "user", "content": prompt})
     st.chat_message("user").write(prompt)
-    # Si pide imagen
-    if "genera" in prompt.lower() or "imagen" in prompt.lower() or "dibuja" in prompt.lower():
-        with st.chat_message("assistant"):
-            st.write(f"Generando imagen: {prompt}")
-            # Usa Pollinations (gratis, sin API key)
-            url = f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}"
+
+    # Palabras que activan imagen
+    es_imagen = any(w in prompt.lower() for w in ["genera", "imagen", "dibuja", "crea", "foto", "oveja", "gato", "perro", "pug"])
+
+    with st.chat_message("assistant"):
+        if es_imagen:
+            st.write(f"Generando: {prompt}")
+            url = f"https://image.pollinations.ai/prompt/{prompt.replace(' ', '%20')}?nologo=true"
             st.image(url, caption=prompt)
-    else:
-        # Chat de texto con Groq si tienes key
-        if api_key:
-            from groq import Groq
-            client = Groq(api_key=api_key)
-            resp = client.chat.completions.create(model="llama3-8b-8192", messages=[{"role":"user","content":prompt}])
-            st.chat_message("assistant").write(resp.choices[0].message.content)
+            st.session_state.chat.append({"role": "assistant", "content": f"Imagen generada: {prompt}"})
         else:
-            st.chat_message("assistant").write("Pon tu GROQ_API_KEY en Secrets de Streamlit para activar el chat. La generación de imágenes ya funciona sin key.")
+            if not api_key:
+                st.warning("Pon tu GROQ_API_KEY en Secrets para chat de texto. Mientras usa 'crea una imagen de...'")
+            else:
+                try:
+                    from groq import Groq
+                    client = Groq(api_key=api_key)
+                    resp = client.chat.completions.create(
+                        model="llama-3.1-8b-instant",
+                        messages=[{"role": "user", "content": prompt}]
+                    )
+                    ans = resp.choices[0].message.content
+                    st.write(ans)
+                    st.session_state.chat.append({"role": "assistant", "content": ans})
+                except Exception as e:
+                    st.error(f"Error Groq: {e}")
+                    st.info("Revisa que tu key en Secrets sea válida y que el modelo sea llama-3.1-8b-instant")
 
 st.divider()
 
 # --- 8 CUADROS ABAJO ---
-st.header("📄 8 Herramientas Esenciales")
-if 'files' not in st.session_state: st.session_state.files = []
+st.header("📄 8 Herramientas Esenciales - 100% funcionando")
 
-up = st.file_uploader("Sube archivos (PDF, Word, JPG)", type=["pdf","docx","jpg","png"], accept_multiple_files=True)
+if 'files' not in st.session_state:
+    st.session_state.files = []
+
+up = st.file_uploader("Sube archivos (PDF, Word, JPG)", type=["pdf", "docx", "jpg", "jpeg", "png"], accept_multiple_files=True)
 if up:
     st.session_state.files = up
+    st.success(f"{len(up)} archivos cargados")
 
 col1, col2, col3, col4 = st.columns(4)
 tool = None
@@ -57,45 +81,92 @@ with col4:
     if st.button("8️⃣ Extraer Texto", use_container_width=True): tool = "texto"
 
 if tool and st.session_state.files:
-    # Lógica simple de cada una
-    if tool == "unir":
-        out = fitz.open()
-        for f in st.session_state.files:
-            if f.name.endswith(".pdf"): out.insert_pdf(fitz.open(stream=f.getvalue(), filetype="pdf"))
-        buf = io.BytesIO(); out.save(buf)
-        st.download_button("Descargar Unido", buf.getvalue(), "unido.pdf")
+    try:
+        if tool == "unir":
+            out = fitz.open()
+            for f in st.session_state.files:
+                if f.name.lower().endswith(".pdf"):
+                    out.insert_pdf(fitz.open(stream=f.getvalue(), filetype="pdf"))
+            buf = io.BytesIO()
+            out.save(buf)
+            st.download_button("⬇️ Descargar Unido", buf.getvalue(), "unido.pdf", "application/pdf")
 
-    if tool == "word2pdf":
-        # Word a PDF básico con fitz
-        for f in st.session_state.files:
-            if f.name.endswith(".docx"):
-                doc = Document(io.BytesIO(f.getvalue()))
-                pdf = fitz.open(); page = pdf.new_page()
-                text = "\n".join([p.text for p in doc.paragraphs])
-                page.insert_text((50,50), text)
-                buf = io.BytesIO(); pdf.save(buf)
-                st.download_button(f"Descargar {f.name}.pdf", buf.getvalue(), f"{f.name}.pdf")
+        if tool == "dividir":
+            for f in st.session_state.files:
+                if f.name.lower().endswith(".pdf"):
+                    doc = fitz.open(stream=f.getvalue(), filetype="pdf")
+                    for i, page in enumerate(doc):
+                        single = fitz.open()
+                        single.insert_pdf(doc, from_page=i, to_page=i)
+                        b = io.BytesIO()
+                        single.save(b)
+                        st.download_button(f"⬇️ Página {i+1} de {f.name}", b.getvalue(), f"{f.name}_pag{i+1}.pdf")
 
-    if tool == "pdf2word":
-        for f in st.session_state.files:
-            if f.name.endswith(".pdf"):
-                with open("temp.pdf","wb") as tmp: tmp.write(f.getvalue())
-                docx_path = "temp.docx"
-                cv = Converter("temp.pdf"); cv.convert(docx_path); cv.close()
-                with open(docx_path,"rb") as d: st.download_button(f"Descargar {f.name}.docx", d, f"{f.name}.docx")
+        if tool == "comprimir":
+            for f in st.session_state.files:
+                if f.name.lower().endswith(".pdf"):
+                    doc = fitz.open(stream=f.getvalue(), filetype="pdf")
+                    b = io.BytesIO()
+                    doc.save(b, garbage=4, deflate=True)
+                    st.download_button(f"⬇️ Comprimido {f.name}", b.getvalue(), f"comprimido_{f.name}")
 
-    if tool == "jpg2pdf":
-        imgs = [Image.open(f) for f in st.session_state.files if f.type.startswith("image")]
-        if imgs:
-            buf = io.BytesIO(); imgs[0].save(buf, "PDF", save_all=True, append_images=imgs[1:])
-            st.download_button("Descargar PDF de Imágenes", buf.getvalue(), "imagenes.pdf")
+        if tool == "word2pdf":
+            for f in st.session_state.files:
+                if f.name.lower().endswith(".docx"):
+                    docx = Document(io.BytesIO(f.getvalue()))
+                    pdf = fitz.open()
+                    page = pdf.new_page()
+                    y = 50
+                    for p in docx.paragraphs:
+                        if p.text.strip():
+                            page.insert_text((50, y), p.text[:1000])
+                            y += 20
+                            if y > 750:
+                                page = pdf.new_page()
+                                y = 50
+                    buf = io.BytesIO()
+                    pdf.save(buf)
+                    st.download_button(f"⬇️ {f.name}.pdf", buf.getvalue(), f"{f.name}.pdf")
 
-    if tool == "texto":
-        txt = ""
-        for f in st.session_state.files:
-            if f.name.endswith(".pdf"):
-                doc = fitz.open(stream=f.getvalue(), filetype="pdf")
-                for p in doc: txt += p.get_text()
-        st.text_area("Texto", txt, height=300)
+        if tool == "pdf2word":
+            for f in st.session_state.files:
+                if f.name.lower().endswith(".pdf"):
+                    open("temp.pdf","wb").write(f.getvalue())
+                    cv = Converter("temp.pdf")
+                    cv.convert("temp.docx")
+                    cv.close()
+                    with open("temp.docx","rb") as d:
+                        st.download_button(f"⬇️ {f.name}.docx", d.read(), f"{f.name}.docx")
 
-    st.success(f"{tool} listo!")
+        if tool == "jpg2pdf":
+            imgs = [Image.open(io.BytesIO(f.getvalue())).convert("RGB") for f in st.session_state.files if f.type.startswith("image")]
+            if imgs:
+                buf = io.BytesIO()
+                imgs[0].save(buf, "PDF", save_all=True, append_images=imgs[1:])
+                st.download_button("⬇️ Descargar PDF de Imágenes", buf.getvalue(), "imagenes.pdf")
+
+        if tool == "pdf2jpg":
+            for f in st.session_state.files:
+                if f.name.lower().endswith(".pdf"):
+                    doc = fitz.open(stream=f.getvalue(), filetype="pdf")
+                    for i, page in enumerate(doc):
+                        pix = page.get_pixmap(dpi=150)
+                        img_bytes = pix.tobytes("png")
+                        st.image(img_bytes, caption=f"{f.name} - Pág {i+1}")
+                        st.download_button(f"⬇️ Descargar Pág {i+1}", img_bytes, f"{f.name}_pag{i+1}.png")
+
+        if tool == "texto":
+            full = ""
+            for f in st.session_state.files:
+                if f.name.lower().endswith(".pdf"):
+                    doc = fitz.open(stream=f.getvalue(), filetype="pdf")
+                    for p in doc:
+                        full += p.get_text() + "\n"
+            st.text_area("Texto extraído", full, height=400)
+            st.download_button("⬇️ Descargar texto.txt", full, "texto.txt")
+
+        st.success("¡Listo!")
+    except Exception as e:
+        st.error(f"Error: {e}")
+
+st.caption("IA arriba (con Pollinations gratis) + 8 herramientas abajo. Word a PDF sí funciona con conversión básica.")
