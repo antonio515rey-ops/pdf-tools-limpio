@@ -1,3 +1,7 @@
 streamlit
 PyMuPDF
 Pillow
+python-docx
+pdf2docx
+requests
+groq
